@@ -1,34 +1,6 @@
+#include "linked_list.h"
 #include <stdio.h>
 #include <stdlib.h>
-
-typedef struct Node {
-    int data;
-    struct Node* next;
-} Node;
-
-typedef struct {
-    Node** index;      // Array of Node pointers
-    int gapPos;        // Start position of gapå
-    int gapSize;       // Fixed gap size (e.g., 10)
-    int logicalSize;   // Number of actual elements
-    int capacity;      // Total array capacity
-} GapIndex;
-
-typedef struct {
-    Node* head;
-    GapIndex gapIndex;
-    int size;          // Same as gapIndex.logicalSize
-} LinkedList;
-
-void initGapIndex(GapIndex* gi, int capacity);
-Node* gapGet(GapIndex* gi, int i);
-void gapInsert(GapIndex* gi, int i, Node* node);
-void gapDelete(GapIndex* gi, int i);
-void initLinkedList(LinkedList* list, int capacity);
-Node* get(LinkedList* list, int i);
-void insert(LinkedList* list, int i, int value);
-void delete(LinkedList* list, int i);
-void printList(LinkedList* list);
 
 // Initialize gap index
 void initGapIndex(GapIndex* gi, int capacity) {
@@ -68,10 +40,11 @@ void gapInsert(GapIndex* gi, int i, Node* node) {
         return;
     }
     
-    // Check if need to resize
-    if(gi->logicalSize + gi->gapSize >= gi->capacity) {
-        printf("Resizing needed (not implemented in this example)\n");
-        return;
+    // changes made here - resizing done
+    if (gi->logicalSize + gi->gapSize >= gi->capacity) {
+        int newCapacity = gi->capacity * 2;  // capacity doubled
+        printf("Resizing from %d to %d capacity\n", gi->capacity, newCapacity);
+        resizeGapIndex(gi, newCapacity);
     }
     
     // Move gap to position i if needed
@@ -111,21 +84,103 @@ void gapInsert(GapIndex* gi, int i, Node* node) {
 
 // Delete node at logical position i
 void gapDelete(GapIndex* gi, int i) {
-    if(i < 0 || i >= gi->logicalSize) {
+    if (i < 0 || i >= gi->logicalSize) {
         printf("Invalid delete position\n");
         return;
     }
-    
-    // Move gap to position i+1 (just after the element to delete)
-    gapInsert(gi, i+1, NULL);  // Moves gap, doesn't insert
-    
-    // Now gap is at i+1, move it left to delete element i
-    if(gi->gapPos > 0) {
-        gi->gapPos--;
-        gi->index[gi->gapPos] = NULL;  // Clear the deleted element
+
+    // changes made here - move elements to position i for direct deletion
+    if (i != gi->gapPos) {
+        int direction = (i < gi->gapPos) ? -1 : 1;
+        int start, end;
+
+        if (direction == -1) {
+            // moving gap left: shift elements right into gap
+            start = i;
+            end = gi->gapPos - 1;
+            for (int pos = end; pos >= start; pos--) {
+                int src = pos;
+                int dst = pos + gi->gapSize;
+                gi->index[dst] = gi->index[src];
+                gi->index[src] = NULL;
+            }
+        }
+        else {
+            // moving gap right: shift elements left into gap
+            start = gi->gapPos;
+            end = i - 1;
+            for (int pos = start; pos <= end; pos++) {
+                int src = pos + gi->gapSize;
+                int dst = pos;
+                gi->index[dst] = gi->index[src];
+                gi->index[src] = NULL;
+            }
+        }
+        gi->gapPos = i;
     }
+
+    gi->index[gi->gapPos] = NULL;
+    
     gi->logicalSize--;
 }
+
+// new functions 
+// resize function for gap buffer
+void resizeGapIndex(GapIndex* gi, int newCapacity) {
+    Node** newIndex = (Node**)malloc(newCapacity * sizeof(Node*));
+    if (!newIndex) {
+        printf("Memory Allocation failed during resize\n");
+        return;
+    }
+    // initialise new array to NULL
+    for (int i = 0; i < newCapacity; i++) {
+        newIndex[i] = NULL;
+    }
+    // copy elements before gap
+    for (int i = 0; i < gi->gapPos; i++) {
+        newIndex[i] = gi->index[i];
+    }
+    // copy elements after gap - new gap position
+    int oldGapEnd = gi->gapPos + gi->gapSize;
+    int newGapEnd = gi->gapPos + gi->gapSize + (newCapacity - gi->capacity);
+
+    for (int i = oldGapEnd; i < gi->capacity; i++) {
+        int newPos = i + (newCapacity - gi->capacity);
+        if (newPos < newCapacity) {
+            newIndex[newPos] = gi->index[i];
+        }
+    }
+    // free old array 
+    free(gi->index);
+    gi->index = newIndex;
+    gi->capacity = newCapacity;
+}
+
+// free entire linked list function
+void freeLinkedList(LinkedList* list) {
+    // free nodes in linked list
+    Node* current = list->head;
+    while (current != NULL) {
+        Node* next = current->next;
+        free(current);
+        current = next;
+    }
+    // free index array
+    free(list->gapIndex.index);
+
+    // reset
+    list->head = NULL;
+    list->size = 0;
+    list->gapIndex.logicalSize = 0;
+    list->gapIndex.gapPos = 0;
+}
+
+// debug function - see gap buffer state
+void printGapState(GapIndex* gi) {
+    printf("Gap State: pos=%d, size=%d, logical=%d, capacity=%d\n",
+        gi->gapPos, gi->gapSize, gi->logicalSize, gi->capacity);
+}
+// end of new functions added
 
 void initLinkedList(LinkedList* list, int capacity) {
     list->head = NULL;
@@ -214,41 +269,4 @@ void printList(LinkedList* list) {
         current = current->next;
     }
     printf("\n");
-}
-
-int main() {
-    LinkedList list;
-    initLinkedList(&list, 50);
-    
-    printf("=== Testing Gap Buffer Indexed Linked List ===\n");
-    
-    // Test insertions
-    insert(&list, 0, 10);
-    insert(&list, 1, 20);
-    insert(&list, 2, 30);
-    insert(&list, 1, 15);  // Insert in middle
-    printList(&list);
-    
-    // Test get (O(1))
-    printf("\nTesting O(1) get:\n");
-    for(int i = 0; i < list.size; i++) {
-        Node* node = get(&list, i);
-        if(node) {
-            printf("Element at index %d: %d\n", i, node->data);
-        }
-    }
-    
-    // Test deletion
-    printf("\nDeleting element at position 2:\n");
-    delete(&list, 2);
-    printList(&list);
-    
-    // Test invalid access
-    printf("\nTesting invalid get at index 10:\n");
-    Node* invalid = get(&list, 10);
-    if(!invalid) {
-        printf("Correctly returned NULL for invalid index\n");
-    }
-    
-    return 0;
 }
